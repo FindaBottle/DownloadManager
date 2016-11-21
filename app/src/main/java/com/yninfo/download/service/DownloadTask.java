@@ -15,6 +15,7 @@ import java.io.InputStream;
 import java.io.RandomAccessFile;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
 import java.util.List;
 
 import static android.content.ContentValues.TAG;
@@ -36,27 +37,69 @@ public class DownloadTask {
 
     public boolean isPaused = false;
 
-    public DownloadTask(Context mContext, FileInfo mFileInfo) {
+    private int mThreadCount = 1;   //线程数量
+
+    private List<DownloadThread> mThreadList = null;
+
+    public DownloadTask(Context mContext, FileInfo mFileInfo,int threadCount) {
         this.mContext = mContext;
         this.mFileInfo = mFileInfo;
+        this.mThreadCount = threadCount;
         mDao = new ThreadDaoImpl(mContext);
     }
 
     public void download(){
-         //读取数据库的线程信息
+         //读取数据库的线程信息,获取下载进度
         List<ThreadInfo> threadInfos =  mDao.getThreads(mFileInfo.getUrl());
-        ThreadInfo threadInfo = null;
         if (threadInfos.size()==0) {
-            threadInfo = new ThreadInfo();
-            threadInfo.setUrl(mFileInfo.getUrl());
-            threadInfo.setStart(0);
-            threadInfo.setEnd(mFileInfo.getLength());
-            threadInfo.setFinished(0);
-        }else {
-            threadInfo = threadInfos.get(0);
+            //获得每个线程下载的长度
+            long length = mFileInfo.getLength()/mThreadCount;
+            for (int i = 0; i < mThreadCount; i++) {
+                //创建线程信息
+                ThreadInfo threadInfo = new ThreadInfo(i,mFileInfo.getUrl(),
+                        length*i,(i+1)*length-1,0);
+                if(i==mThreadCount-1){
+                    threadInfo.setEnd(mFileInfo.getLength());
+                }
+                //添加到线程信息集合中
+                threadInfos.add(threadInfo);
+                mDao.insertThreadInfo(threadInfo);
+            }
         }
-        //创建子线程开始下载
-        new DownloadThread(threadInfo).start();
+        //启动多个线程进行加载
+        mThreadList = new ArrayList<>();
+        for (ThreadInfo info: threadInfos
+             ) {
+            DownloadThread thread = new DownloadThread(info);
+            thread.start();
+            //添加到线程集合
+            mThreadList.add(thread);
+        }
+    }
+
+    /**
+     * 判断是否所有线程都执行完毕
+     *
+     */
+    private synchronized void checkAllThreadFinish(){
+        boolean allFinished = true;
+        //遍历线程集合，判断线程是否都执行完毕
+        for (DownloadThread thread: mThreadList
+             ) {
+            if(!thread.isFinished){
+                allFinished = false;
+                break;
+            }
+        }
+        if(allFinished){
+            // 删除下载记录
+            mDao.deleteThread(mFileInfo.getUrl());
+            //发送广播通知下载结束
+            Intent it = new Intent();
+            it.setAction(DownloadService.ACTION_FINISH);
+            it.putExtra("fileInfo",mFileInfo);
+            mContext.sendBroadcast(it);
+        }
     }
 
     /**
@@ -66,16 +109,15 @@ public class DownloadTask {
 
         private ThreadInfo threadInfo = null;
 
+        public boolean isFinished = false;
+
         public DownloadThread(ThreadInfo threadInfo) {
             this.threadInfo = threadInfo;
         }
 
         @Override
         public void run() {
-            //数据库中插入线程信息
-            if(mDao.isExists(threadInfo.getUrl(),threadInfo.getId())){
-                mDao.insertThreadInfo(threadInfo);
-            }
+
 
             HttpURLConnection conn = null;
             RandomAccessFile raf = null;
@@ -105,25 +147,29 @@ public class DownloadTask {
                     while ((len=input.read(buffer))!=-1){
                         //写入文件
                         raf.write(buffer,0,len);
-                        //把下载进度广播到activity
+                        //累加整个文件的完成进度
                         mFinished+=len;
+                        //累加每个线程完成的进度
+                        threadInfo.setFinished(threadInfo.getFinished()+len);
                         if(System.currentTimeMillis()-time>500){
                             time = System.currentTimeMillis();
-                            Log.d(TAG, "finished: "+mFinished+",length:"+mFileInfo.getLength()+",progress:"+mFinished  * 100/mFileInfo.getLength());
+                            //把下载进度广播到activity
+                      //      Log.d(TAG, "finished: "+mFinished+",length:"+mFileInfo.getLength()+",progress:"+mFinished  * 100/mFileInfo.getLength());
                             intent.putExtra("finished",mFinished  * 100/mFileInfo.getLength());
+                            intent.putExtra("id",mFileInfo.getId());
                             mContext.sendBroadcast(intent);
                         }
                         //下载暂停时，保存下载进度
                         if(isPaused){
-                            mDao.updateThreadInfo(threadInfo.getUrl(),threadInfo.getId(),mFinished);
+                            mDao.updateThreadInfo(threadInfo.getUrl(),threadInfo.getId(),threadInfo.getFinished());
                             return;
                         }
 
                     }
-                    intent.putExtra("finished",100l);
-                    mContext.sendBroadcast(intent);
-                    //删除线程信息
-                    mDao.deleteThreadInfo(threadInfo.getUrl(),threadInfo.getId());
+
+                    isFinished = true;
+                    //检查下载任务是否执行完毕
+                    checkAllThreadFinish();
 
                 }
 

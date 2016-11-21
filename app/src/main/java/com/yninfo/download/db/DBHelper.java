@@ -13,9 +13,15 @@ public class DBHelper extends SQLiteOpenHelper {
 
     private static final String DB_NAME = "download.db";
     private static int version = 1;
+    private static DBHelper instance = null;
 
+    public static  DBHelper getInstance(Context context){
+        if(instance==null)
+            instance = new DBHelper(context);
+        return instance;
+    }
 
-    public DBHelper(Context context) {
+    private DBHelper(Context context) {
         super(context, DB_NAME, null, version);
     }
 
@@ -32,7 +38,7 @@ public class DBHelper extends SQLiteOpenHelper {
 
     private String getCreateThreadInfoSql(){
         String sql = " create table thread_info(_id INTEGER PRIMARY KEY AUTOINCREMENT," +
-                " thread_id text,url text,start integer,end integer,finished integer," +
+                " thread_id INTEGER,url text,start INTEGER,end INTEGER,finished INTEGER," +
                 "create_time timestamp not null default CURRENT_TIMESTAMP,finish_time timestamp )  ";
         return sql;
     }

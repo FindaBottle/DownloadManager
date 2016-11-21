@@ -17,6 +17,8 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * Created by zhaozhiping on 17/11/2016.
@@ -31,14 +33,19 @@ public class DownloadService extends Service {
 
     public static final String ACTION_START = "ACTION_START";
     public static final String ACTION_STOP = "ACTION_STOP";
+    public static final String ACTION_FINISH = "ACTION_FINISH";
     public static final String ACTION_UPDATE = "ACTION_UPDATE";
-    public static final int MSG_INIT = 0;
+    public static final int MSG_INIT = 0x1;
 
-    private DownloadTask mTask = null;
+    private Map<Integer,DownloadTask> mTasks = new LinkedHashMap<Integer,DownloadTask>();
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         // 获得activity传来的参数
+        Log.d(TAG, "onStartCommand: 进入service："+intent==null?"intent为空":"不为空");
+        if(intent==null || intent.getAction()==null){
+            return super.onStartCommand(intent, flags, startId);
+        }
         if (ACTION_START.equals(intent.getAction())) {
             Log.d(TAG, "onStartCommand: 开始下载");
             FileInfo fileInfo = (FileInfo) intent.getSerializableExtra("fileInfo");
@@ -46,11 +53,11 @@ public class DownloadService extends Service {
             //  启动初始化线程
             new InitThread(fileInfo).start();
         } else if (ACTION_STOP.equals(intent.getAction())) {
-            Log.d(TAG, "onStartCommand: 结束下载");
+            Log.d(TAG, "onStartCommand: 暂停下载");
             FileInfo fileInfo = (FileInfo) intent.getSerializableExtra("fileInfo");
-            if(mTask!=null){
-                mTask.isPaused = true;
-            }
+            DownloadTask task = mTasks.get(fileInfo.getId());
+            if(task!=null)
+                task.isPaused = true;
         }
         return super.onStartCommand(intent, flags, startId);
     }
@@ -68,8 +75,10 @@ public class DownloadService extends Service {
                 case MSG_INIT:
                     FileInfo file = (FileInfo) msg.obj;
                     Log.d(TAG, "init: 收到文件" + file.toString());
-                    mTask = new DownloadTask(DownloadService.this,file);
+                    DownloadTask mTask = new DownloadTask(DownloadService.this,file,3);
                     mTask.download();
+                    //把下载任务添加到集合中
+                    mTasks.put(file.getId(),mTask);
                     break;
             }
         }

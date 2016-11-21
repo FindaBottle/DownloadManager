@@ -19,13 +19,13 @@ public class ThreadDaoImpl implements ThreadDao {
     private DBHelper dbHelper = null;
 
     public ThreadDaoImpl(Context context) {
-        dbHelper = new DBHelper(context);
+        dbHelper = DBHelper.getInstance(context);
     }
 
     @Override
-    public void insertThreadInfo(ThreadInfo threadInfo) {
+    public synchronized void insertThreadInfo(ThreadInfo threadInfo) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        String sql = "insert int thread_info (thread_id,url,start,end,finish) values (?,?,?,?,?)";
+        String sql = "insert into thread_info (thread_id,url,start,end,finished) values (?,?,?,?,?)";
         db.execSQL(sql
         ,new Object[]{threadInfo.getId(),threadInfo.getUrl(),
                         threadInfo.getStart(),threadInfo.getEnd(),
@@ -34,7 +34,7 @@ public class ThreadDaoImpl implements ThreadDao {
     }
 
     @Override
-    public void deleteThreadInfo(String url, int thread_id) {
+    public synchronized void deleteThreadInfo(String url, int thread_id) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         String sql = "delete from thread_info where url =? and thread_id =?";
         db.execSQL(sql
@@ -43,7 +43,16 @@ public class ThreadDaoImpl implements ThreadDao {
     }
 
     @Override
-    public void updateThreadInfo(String url, int thread_id, long finished) {
+    public synchronized void deleteThread(String url)
+    {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        db.execSQL("delete from thread_info where url = ?",
+                new Object[]{url});
+        db.close();
+    }
+
+    @Override
+    public synchronized void updateThreadInfo(String url, int thread_id, long finished) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         String sql = "update thread_info set finished = ? where url =? and thread_id =?";
         db.execSQL(sql
@@ -53,31 +62,35 @@ public class ThreadDaoImpl implements ThreadDao {
 
     @Override
     public List<ThreadInfo> getThreads(String url) {
-        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
         List<ThreadInfo> list = new ArrayList<>();
         String sql = "select * from thread_info where url =?";
         Cursor cursor = db.rawQuery(sql,new String[]{url});
-        while (cursor.moveToNext()){
-            ThreadInfo info = new ThreadInfo();
-            info.setId(cursor.getInt(cursor.getColumnIndex("id")));
-            info.setUrl(cursor.getString(cursor.getColumnIndex("url")));
-            info.setStart(cursor.getInt(cursor.getColumnIndex("start")));
-            info.setEnd(cursor.getInt(cursor.getColumnIndex("end")));
-            info.setFinished(cursor.getInt(cursor.getColumnIndex("finished")));
+        if(cursor.getCount()>0){
+            while (cursor.moveToNext()){
+                ThreadInfo info = new ThreadInfo();
+                info.setId(cursor.getInt(cursor.getColumnIndex("thread_id")));
+                info.setUrl(cursor.getString(cursor.getColumnIndex("url")));
+                info.setStart(cursor.getLong(cursor.getColumnIndex("start")));
+                info.setEnd(cursor.getLong(cursor.getColumnIndex("end")));
+                info.setFinished(cursor.getLong(cursor.getColumnIndex("finished")));
 
-            list.add(info);
+                list.add(info);
+            }
         }
+
         cursor.close();
         db.close();
         return list;
     }
 
     @Override
-    public boolean isExists(String url, int thread_id) {
-        SQLiteDatabase db = dbHelper.getWritableDatabase();
-        String sql = "select * from thread_info where url =? and thread_id = ?";
-        Cursor cursor = db.rawQuery(sql,new String[]{url,thread_id+""});
+    public boolean isExists(String url, int thread_id)
+    {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor cursor = db.rawQuery("select * from thread_info where url = ? and thread_id = ?", new String[]{url, thread_id+""});
         boolean exists = cursor.moveToNext();
+        cursor.close();
         db.close();
         return exists;
     }
